@@ -5,10 +5,10 @@ import pandas as pd
 import json
 from datetime import datetime
 import requests
+import os
 
 app = FastAPI()
 
-# 🔓 Permite cereri de la orice origine (pentru Netlify)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -21,14 +21,12 @@ app.add_middleware(
 def home():
     return {"message": "MiddleBro funcționează!"}
 
-# 📄 Model pentru matching
 class MatchRequest(BaseModel):
     service: str
     city: str
     day: str
     hour: str
 
-# 📄 Model pentru rezervare (CU EMAIL!)
 class BookingRequest(BaseModel):
     user_name: str
     business_id: str
@@ -37,7 +35,6 @@ class BookingRequest(BaseModel):
     time: str
     email: str
 
-# 🔄 Încarcă business-urile din Google Sheet
 def load_businesses_from_sheet():
     sheet_url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQg8KI_0G7imJNFCyzdwZdC3UkHfQxwTYDkdWfzfnB4IjDPJWr3uJdKlj6LI1g31BIweoPylMEHzskG/pub?output=csv"
     df = pd.read_csv(sheet_url)
@@ -56,11 +53,9 @@ def load_businesses_from_sheet():
         businesses.append(biz)
     return businesses
 
-# 🧠 Matching logic
 @app.post("/match")
 async def match_service(request: MatchRequest):
     businesses = load_businesses_from_sheet()
-
     for biz in businesses:
         if (
             request.service in biz["services"]
@@ -71,12 +66,11 @@ async def match_service(request: MatchRequest):
             return {"match": biz}
     return {"match": None}
 
-# ✉️ Trimite email cu Brevo
 def send_confirmation_email(to_email, user_name, business_name, service, date, time):
     url = "https://api.brevo.com/v3/smtp/email"
     headers = {
         "accept": "application/json",
-        "api-key": "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",
+        "api-key": os.getenv("BREVO_API_KEY"),
         "content-type": "application/json"
     }
     payload = {
@@ -92,21 +86,18 @@ def send_confirmation_email(to_email, user_name, business_name, service, date, t
               <li><strong>Data:</strong> {date}</li>
               <li><strong>Ora:</strong> {time}</li>
             </ul>
-            <p>📍 Locație: orașul selectat în platformă</p>
             <br />
             <p>Mulțumim că folosești <strong>MiddleBro</strong> – AI-ul tău pentru programări smart! 🤖</p>
           </body>
         </html>
         """
     }
-
     try:
         response = requests.post(url, json=payload, headers=headers)
         print(f"Email trimis: {response.status_code} | {response.text}")
     except Exception as e:
         print(f"Eroare la trimiterea emailului: {e}")
 
-# 📥 Rezervare + email
 @app.post("/book")
 def book_appointment(request: BookingRequest):
     new_booking = {
@@ -130,7 +121,6 @@ def book_appointment(request: BookingRequest):
     with open("bookings.json", "w") as f:
         json.dump(existing, f, indent=2)
 
-    # 📨 trimite emailul
     send_confirmation_email(
         to_email=request.email,
         user_name=request.user_name,
@@ -141,4 +131,3 @@ def book_appointment(request: BookingRequest):
     )
 
     return {"status": "confirmed", "booking": new_booking}
-    
