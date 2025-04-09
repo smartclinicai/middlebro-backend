@@ -21,27 +21,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 🔌 Conectare la DB
+# 🔌 Conectare la DB cu debug print
 @app.on_event("startup")
 async def startup():
-    print("🚀 Serverul pornește...")
+    print("🔌 Connecting to DB:", os.getenv("DATABASE_URL"))
     await database.connect()
 
 @app.on_event("shutdown")
 async def shutdown():
-    print("🛑 Serverul se oprește...")
     await database.disconnect()
 
-# ✅ Endpoint de health check pentru Render
-@app.get("/health")
-def health_check():
-    return {"status": "ok"}
-
-# 🌐 Endpoint de bază
+# ✅ Health check
 @app.get("/")
 def home():
     return {"message": "MiddleBro funcționează!"}
 
+# 📌 Match business endpoint
 class MatchRequest(BaseModel):
     service: str
     city: str
@@ -83,6 +78,7 @@ async def match_service(request: MatchRequest):
 
     return {"match": None}
 
+# 📅 Booking endpoint
 class BookingRequest(BaseModel):
     user_name: str
     business_id: str
@@ -111,7 +107,7 @@ async def book_appointment(request: BookingRequest):
     except Exception as e:
         print("❌ Eroare la salvare în DB:", e)
 
-    # ✉️ Trimite email
+    # ✉️ Email
     api_key = os.getenv("BREVO_API_KEY")
     if api_key:
         try:
