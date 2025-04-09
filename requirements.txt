@@ -2,3 +2,7 @@ fastapi
 uvicorn
 pandas
 requests
+sqlalchemy
+databases
+asyncpg
+python-dotenv
