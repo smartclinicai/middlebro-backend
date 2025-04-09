@@ -2,14 +2,17 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import pandas as pd
-import json
-from datetime import datetime
 import os
 import requests
+from datetime import datetime
+
+from db import database
+from models import bookings
+from sqlalchemy import insert
 
 app = FastAPI()
 
-# 🔓 Permite cereri din orice locație (pentru Netlify)
+# 🔓 CORS pentru frontend (Netlify)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -18,6 +21,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 🔌 Conectare la DB
+@app.on_event("startup")
+async def startup():
+    print("🚀 Serverul pornește...")
+    await database.connect()
+
+@app.on_event("shutdown")
+async def shutdown():
+    print("🛑 Serverul se oprește...")
+    await database.disconnect()
+
+# ✅ Endpoint de health check pentru Render
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
+
+# 🌐 Endpoint de bază
 @app.get("/")
 def home():
     return {"message": "MiddleBro funcționează!"}
@@ -72,26 +92,24 @@ class BookingRequest(BaseModel):
     email: str
 
 @app.post("/book")
-def book_appointment(request: BookingRequest):
+async def book_appointment(request: BookingRequest):
     new_booking = {
         "user_name": request.user_name,
         "business_id": request.business_id,
         "service": request.service,
         "date": request.date,
         "time": request.time,
-        "created_at": datetime.now().isoformat()
+        "created_at": datetime.now(),
     }
 
+    print("➡️ Booking primit:", new_booking)
+
     try:
-        with open("bookings.json", "r") as f:
-            existing = json.load(f)
-    except:
-        existing = []
-
-    existing.append(new_booking)
-
-    with open("bookings.json", "w") as f:
-        json.dump(existing, f, indent=2)
+        query = insert(bookings).values(**new_booking)
+        await database.execute(query)
+        print("✅ Booking salvat cu succes în baza de date!")
+    except Exception as e:
+        print("❌ Eroare la salvare în DB:", e)
 
     # ✉️ Trimite email
     api_key = os.getenv("BREVO_API_KEY")
@@ -121,9 +139,9 @@ def book_appointment(request: BookingRequest):
                     """
                 }
             )
-            print(f"Email trimis: {response.status_code} | {response.text}")
+            print(f"📧 Email trimis: {response.status_code} | {response.text}")
         except Exception as e:
-            print(f"Eroare la trimiterea emailului: {str(e)}")
+            print(f"❌ Eroare la trimiterea emailului: {str(e)}")
     else:
         print("❌ BREVO_API_KEY lipsă!")
 
