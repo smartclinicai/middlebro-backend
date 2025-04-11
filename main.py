@@ -4,6 +4,7 @@ from pydantic import BaseModel
 import pandas as pd
 import os
 from datetime import datetime
+import requests  # <-- importat pentru Mailersend
 
 from db import database
 from models import bookings
@@ -77,6 +78,31 @@ async def match_service(request: MatchRequest):
 
     return {"match": None}
 
+# 📩 Funcția de trimitere email prin Mailersend
+def send_email_mailersend(to_email, subject, html_content):
+    url = "https://api.mailersend.com/v1/email"
+    headers = {
+        "Authorization": "Bearer mlsn.e11ff0706d2d5c341e1ad9042cfceefebcc4c540c6e7fea059b347b0ceff66ef",
+        "Content-Type": "application/json"
+    }
+    json_data = {
+        "from": {
+            "email": "noreply@middlebro.ai",
+            "name": "MiddleBro"
+        },
+        "to": [
+            {
+                "email": to_email,
+                "name": "Client"
+            }
+        ],
+        "subject": subject,
+        "html": html_content
+    }
+
+    response = requests.post(url, headers=headers, json=json_data)
+    print(f"📬 Mail trimis cu status {response.status_code} | {response.text}")
+
 # 📅 Booking endpoint
 class BookingRequest(BaseModel):
     user_name: str
@@ -105,5 +131,22 @@ async def book_appointment(request: BookingRequest):
         print("✅ Booking salvat cu succes în baza de date!")
     except Exception as e:
         print("❌ Eroare la salvare în DB:", e)
+
+    # ✉️ Trimitem email cu Mailersend
+    send_email_mailersend(
+        to_email=request.email,
+        subject="📅 Rezervarea ta la MiddleBro",
+        html_content=f"""
+        <html>
+            <body>
+                <h2>Salut, {request.user_name}!</h2>
+                <p>Ai rezervat cu succes un <strong>{request.service}</strong> la <strong>{request.business_id}</strong>.</p>
+                <p>📍 Data: {request.date}<br>⏰ Ora: {request.time}</p>
+                <br>
+                <p>Cu drag,<br><strong>MiddleBro 🤖</strong></p>
+            </body>
+        </html>
+        """
+    )
 
     return {"status": "confirmed", "booking": new_booking}
