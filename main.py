@@ -4,24 +4,26 @@ from pydantic import BaseModel
 import pandas as pd
 import os
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from db import database
 from models import bookings
 from sqlalchemy import insert
+
+from calendar_integration import create_event  # 📅 Import funcție calendar
 
 app = FastAPI()
 
 # 🔓 CORS pentru frontend (Netlify)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://middlebro.netlify.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 🔌 Conectare la DB cu debug print
+# 🔌 Conectare la DB
 @app.on_event("startup")
 async def startup():
     print("🔌 Connecting to DB:", os.getenv("DATABASE_URL"))
@@ -108,8 +110,8 @@ class BookingRequest(BaseModel):
     user_name: str
     business_id: str
     service: str
-    date: str
-    time: str
+    date: str  # format YYYY-MM-DD
+    time: str  # format HH:MM
     email: str
 
 @app.post("/book")
@@ -148,5 +150,20 @@ async def book_appointment(request: BookingRequest):
         </html>
         """
     )
+
+    # 📅 Adăugăm în Google Calendar
+    try:
+        start_dt = datetime.fromisoformat(f"{request.date}T{request.time}")
+        end_dt = start_dt + timedelta(hours=1)
+
+        create_event(
+            summary=f"{request.service} - {request.user_name}",
+            description=f"La {request.business_id} prin MiddleBro",
+            start_time=start_dt.isoformat(),
+            end_time=end_dt.isoformat()
+        )
+        print("📅 Eveniment adăugat în Google Calendar!")
+    except Exception as e:
+        print("❌ Eroare la adăugare în calendar:", e)
 
     return {"status": "confirmed", "booking": new_booking}
