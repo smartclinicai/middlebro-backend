@@ -3,8 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import pandas as pd
 import os
+import requests
 from datetime import datetime
-import requests  # <-- importat pentru Mailersend
 
 from db import database
 from models import bookings
@@ -87,7 +87,7 @@ def send_email_mailersend(to_email, subject, html_content):
     }
     json_data = {
         "from": {
-            "email": "noreply@middlebro.ai",
+            "email": "test-eqvygm0z8rjl0p7w@mlsender.net",
             "name": "MiddleBro"
         },
         "to": [
