@@ -4,17 +4,18 @@ from pydantic import BaseModel
 import pandas as pd
 import os
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
+import calendar
 
 from db import database
 from models import bookings
 from sqlalchemy import insert
 
-from calendar_integration import create_event  # 📅 Import funcție calendar
+from calendar_integration import create_event
 
 app = FastAPI()
 
-# 🔓 CORS pentru frontend (Netlify)
+# 🔓 CORS pentru Netlify
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["https://middlebro.netlify.app"],
@@ -23,7 +24,33 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 🔌 Conectare la DB
+# 🔁 Conversie "joi" -> "2025-04-18"
+def get_next_date_for_weekday(weekday_name: str) -> str:
+    days_map = {
+        "luni": 0,
+        "marți": 1,
+        "miercuri": 2,
+        "joi": 3,
+        "vineri": 4,
+        "sâmbătă": 5,
+        "duminică": 6
+    }
+
+    today = date.today()
+    today_weekday = today.weekday()
+    target_weekday = days_map.get(weekday_name.lower())
+
+    if target_weekday is None:
+        raise ValueError(f"Zi invalidă: {weekday_name}")
+
+    days_ahead = (target_weekday - today_weekday + 7) % 7
+    if days_ahead == 0:
+        days_ahead = 7
+
+    next_date = today + timedelta(days=days_ahead)
+    return next_date.isoformat()
+
+# 🔌 DB Connect
 @app.on_event("startup")
 async def startup():
     print("🔌 Connecting to DB:", os.getenv("DATABASE_URL"))
@@ -38,7 +65,7 @@ async def shutdown():
 def home():
     return {"message": "MiddleBro funcționează!"}
 
-# 📌 Match business endpoint
+# 📌 Match endpoint
 class MatchRequest(BaseModel):
     service: str
     city: str
@@ -80,7 +107,7 @@ async def match_service(request: MatchRequest):
 
     return {"match": None}
 
-# 📩 Funcția de trimitere email prin Mailersend
+# 📩 Mailersend
 def send_email_mailersend(to_email, subject, html_content):
     url = "https://api.mailersend.com/v1/email"
     headers = {
@@ -105,17 +132,25 @@ def send_email_mailersend(to_email, subject, html_content):
     response = requests.post(url, headers=headers, json=json_data)
     print(f"📬 Mail trimis cu status {response.status_code} | {response.text}")
 
-# 📅 Booking endpoint
+# 📅 Booking
 class BookingRequest(BaseModel):
     user_name: str
     business_id: str
     service: str
-    date: str  # format YYYY-MM-DD
-    time: str  # format HH:MM
+    date: str  # ex: joi
+    time: str  # ex: 18:00
     email: str
 
 @app.post("/book")
 async def book_appointment(request: BookingRequest):
+    try:
+        # 📅 Transformăm "joi" în "2025-04-18"
+        date_iso = get_next_date_for_weekday(request.date)
+        start_dt = datetime.fromisoformat(f"{date_iso}T{request.time}")
+        end_dt = start_dt + timedelta(hours=1)
+    except Exception as e:
+        return {"error": f"Data invalidă: {e}"}
+
     new_booking = {
         "user_name": request.user_name,
         "business_id": request.business_id,
@@ -134,7 +169,7 @@ async def book_appointment(request: BookingRequest):
     except Exception as e:
         print("❌ Eroare la salvare în DB:", e)
 
-    # ✉️ Trimitem email cu Mailersend
+    # ✉️ Mail (momentan fail 422)
     send_email_mailersend(
         to_email=request.email,
         subject="📅 Rezervarea ta la MiddleBro",
@@ -151,11 +186,8 @@ async def book_appointment(request: BookingRequest):
         """
     )
 
-    # 📅 Adăugăm în Google Calendar
+    # 📅 Calendar
     try:
-        start_dt = datetime.fromisoformat(f"{request.date}T{request.time}")
-        end_dt = start_dt + timedelta(hours=1)
-
         create_event(
             summary=f"{request.service} - {request.user_name}",
             description=f"La {request.business_id} prin MiddleBro",
