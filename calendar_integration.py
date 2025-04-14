@@ -17,7 +17,7 @@ def authenticate_google():
         with open('token.pickle', 'rb') as token:
             creds = pickle.load(token)
 
-    # Dacă nu există sau a expirat, facem login
+    # Dacă nu există sau a expirat, inițiem flow-ul manual
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
@@ -25,8 +25,13 @@ def authenticate_google():
             flow = InstalledAppFlow.from_client_secrets_file(
                 'credentials.json', SCOPES
             )
-            # 🔧 Am schimbat portul la 8765
-            creds = flow.run_local_server(port=8765, open_browser=True)
+
+            # 🔗 Link de autentificare pentru server (Render)
+            auth_url, _ = flow.authorization_url(prompt='consent')
+            print(f"\n🔗 Deschide acest link într-un browser local:\n{auth_url}\n")
+            code = input("📥 Introdu codul de autentificare de la Google: ")
+            flow.fetch_token(code=code)
+            creds = flow.credentials
 
         # Salvăm token-ul pentru folosiri viitoare
         with open('token.pickle', 'wb') as token:
