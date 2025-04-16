@@ -1,15 +1,16 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 import pandas as pd
 import os
 import requests
 from datetime import datetime, timedelta, date
 import calendar
+from passlib.context import CryptContext
 
 from db import database
-from models import bookings
-from sqlalchemy import insert
+from models import bookings, business_users
+from sqlalchemy import insert, select
 
 from calendar_integration import create_event
 
@@ -132,7 +133,7 @@ def send_email_mailersend(to_email, subject, html_content):
     response = requests.post(url, headers=headers, json=json_data)
     print(f"📬 Mail trimis cu status {response.status_code} | {response.text}")
 
-# 📅 Booking
+# 🗓️ Booking
 class BookingRequest(BaseModel):
     user_name: str
     business_id: str
@@ -144,7 +145,7 @@ class BookingRequest(BaseModel):
 @app.post("/book")
 async def book_appointment(request: BookingRequest):
     try:
-        # 📅 Transformăm "joi" în "2025-04-18"
+        # 🗓️ Transformăm "joi" în "2025-04-18"
         date_iso = get_next_date_for_weekday(request.date)
         start_dt = datetime.fromisoformat(f"{date_iso}T{request.time}")
         end_dt = start_dt + timedelta(hours=1)
@@ -160,7 +161,7 @@ async def book_appointment(request: BookingRequest):
         "created_at": datetime.now(),
     }
 
-    print("➡️ Booking primit:", new_booking)
+    print("➔ Booking primit:", new_booking)
 
     try:
         query = insert(bookings).values(**new_booking)
@@ -172,7 +173,7 @@ async def book_appointment(request: BookingRequest):
     # ✉️ Mail (momentan fail 422)
     send_email_mailersend(
         to_email=request.email,
-        subject="📅 Rezervarea ta la MiddleBro",
+        subject="🗓️ Rezervarea ta la MiddleBro",
         html_content=f"""
         <html>
             <body>
@@ -186,7 +187,7 @@ async def book_appointment(request: BookingRequest):
         """
     )
 
-    # 📅 Calendar
+    # 🗓️ Calendar
     try:
         create_event(
             summary=f"{request.service} - {request.user_name}",
@@ -194,8 +195,36 @@ async def book_appointment(request: BookingRequest):
             start_time=start_dt.isoformat(),
             end_time=end_dt.isoformat()
         )
-        print("📅 Eveniment adăugat în Google Calendar!")
+        print("🗓️ Eveniment adăugat în Google Calendar!")
     except Exception as e:
         print("❌ Eroare la adăugare în calendar:", e)
 
     return {"status": "confirmed", "booking": new_booking}
+
+# 🔐 Register business endpoint
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+class RegisterBusinessRequest(BaseModel):
+    email: EmailStr
+    password: str
+    name: str = None
+
+@app.post("/register_business")
+async def register_business(request: RegisterBusinessRequest):
+    query = select(business_users).where(business_users.c.email == request.email)
+    existing_user = await database.fetch_one(query)
+
+    if existing_user:
+        return {"error": "Email deja înregistrat."}
+
+    hashed_password = pwd_context.hash(request.password)
+    new_user = {
+        "email": request.email,
+        "password_hash": hashed_password,
+        "name": request.name,
+    }
+
+    insert_query = insert(business_users).values(**new_user)
+    await database.execute(insert_query)
+
+    return {"status": "cont creat cu succes ✅"}
