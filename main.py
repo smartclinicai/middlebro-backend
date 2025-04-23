@@ -1,5 +1,3 @@
-# Scriem varianta finală a main.py cu tot ce e complet configurat pentru JWT și Swagger
-full_main_py = """
 from fastapi import FastAPI, Request, HTTPException, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer
@@ -8,14 +6,12 @@ import pandas as pd
 import os
 import requests
 from datetime import datetime, timedelta, date
-import calendar
 from passlib.context import CryptContext
 from jose import JWTError, jwt
+from sqlalchemy import insert, select
 
 from db import database
 from models import bookings, business_users
-from sqlalchemy import insert, select
-
 from calendar_integration import create_event
 
 app = FastAPI(
@@ -27,13 +23,13 @@ app = FastAPI(
     }
 )
 
-# JWT Config
+# JWT config
 SECRET_KEY = "middlebro-secret-key"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login_business")
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# CORS pentru Netlify
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["https://middlebro.netlify.app"],
@@ -41,22 +37,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Conversie "joi" -> ISO
-def get_next_date_for_weekday(weekday_name: str) -> str:
-    days_map = {
-        "luni": 0, "marți": 1, "miercuri": 2,
-        "joi": 3, "vineri": 4, "sâmbătă": 5, "duminică": 6
-    }
-    today = date.today()
-    today_weekday = today.weekday()
-    target_weekday = days_map.get(weekday_name.lower())
-    if target_weekday is None:
-        raise ValueError(f"Zi invalidă: {weekday_name}")
-    days_ahead = (target_weekday - today_weekday + 7) % 7
-    if days_ahead == 0:
-        days_ahead = 7
-    return (today + timedelta(days=days_ahead)).isoformat()
 
 @app.on_event("startup")
 async def startup():
@@ -70,7 +50,20 @@ async def shutdown():
 @app.get("/")
 def home():
     return {"message": "MiddleBro funcționează!"}
+# 🔁 Conversie "joi" → dată ISO
+def get_next_date_for_weekday(weekday_name: str) -> str:
+    days_map = {
+        "luni": 0, "marți": 1, "miercuri": 2,
+        "joi": 3, "vineri": 4, "sâmbătă": 5, "duminică": 6
+    }
+    today = date.today()
+    target_weekday = days_map.get(weekday_name.lower())
+    if target_weekday is None:
+        raise ValueError(f"Zi invalidă: {weekday_name}")
+    days_ahead = (target_weekday - today.weekday() + 7) % 7 or 7
+    return (today + timedelta(days=days_ahead)).isoformat()
 
+# 📌 Matching
 class MatchRequest(BaseModel):
     service: str
     city: str
@@ -83,44 +76,43 @@ def load_businesses_from_sheet():
     df = pd.read_csv(sheet_url)
     businesses = []
     for _, row in df.iterrows():
-        biz = {
+        businesses.append({
             "id": row["id"],
             "name": row["name"],
             "services": [s.strip() for s in row["services"].split(",")],
             "city": row["city"],
             "availability": {"joi": [h.strip() for h in row["joi"].split(",")]}
-        }
-        businesses.append(biz)
+        })
     return businesses
 
 @app.post("/match")
 async def match_service(request: MatchRequest):
-    businesses = load_businesses_from_sheet()
-    for biz in businesses:
+    for biz in load_businesses_from_sheet():
         if (
-            request.service in biz["services"]
-            and request.city.lower() == biz["city"].lower()
-            and request.day in biz["availability"]
-            and request.hour in biz["availability"][request.day]
+            request.service in biz["services"] and
+            request.city.lower() == biz["city"].lower() and
+            request.day in biz["availability"] and
+            request.hour in biz["availability"][request.day]
         ):
             return {"match": biz}
     return {"match": None}
 
+# 📩 Email
 def send_email_mailersend(to_email, subject, html_content):
     url = "https://api.mailersend.com/v1/email"
     headers = {
         "Authorization": "Bearer mlsn.e11ff0706d2d5c341e1ad9042cfceefebcc4c540c6e7fea059b347b0ceff66ef",
         "Content-Type": "application/json"
     }
-    json_data = {
+    data = {
         "from": {"email": "test-eqvygm0z8rjl0p7w@mlsender.net", "name": "MiddleBro"},
-        "to": [{"email": to_email, "name": "Client"}],
+        "to": [{"email": to_email}],
         "subject": subject,
         "html": html_content
     }
-    response = requests.post(url, headers=headers, json=json_data)
-    print(f"📬 Mail trimis cu status {response.status_code} | {response.text}")
+    requests.post(url, headers=headers, json=data)
 
+# 📅 Booking
 class BookingRequest(BaseModel):
     user_name: str
     business_id: str
@@ -144,19 +136,18 @@ async def book_appointment(request: BookingRequest):
         "service": request.service,
         "date": request.date,
         "time": request.time,
-        "created_at": datetime.now(),
+        "created_at": datetime.now()
     }
 
     try:
-        query = insert(bookings).values(**new_booking)
-        await database.execute(query)
+        await database.execute(insert(bookings).values(**new_booking))
     except Exception as e:
-        print("❌ Eroare la salvare în DB:", e)
+        print("❌ Eroare DB:", e)
 
     send_email_mailersend(
-        to_email=request.email,
-        subject="🗓️ Rezervarea ta la MiddleBro",
-        html_content=f"<h2>Salut, {request.user_name}!</h2><p>Ai rezervat un {request.service} la {request.business_id}.</p><p>{request.date} la ora {request.time}</p><p><strong>MiddleBro 🤖</strong></p>"
+        request.email,
+        "🗓️ Rezervarea ta la MiddleBro",
+        f"<p>Salut, {request.user_name}!</p><p>Ai rezervat un {request.service} la {request.business_id} pentru {request.date} la {request.time}.</p><p><strong>MiddleBro 🤖</strong></p>"
     )
 
     try:
@@ -167,13 +158,10 @@ async def book_appointment(request: BookingRequest):
             end_time=end_dt.isoformat()
         )
     except Exception as e:
-        print("❌ Eroare la calendar:", e)
+        print("❌ Eroare calendar:", e)
 
     return {"status": "confirmed", "booking": new_booking}
-
-# REGISTER + LOGIN BUSINESS
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
+# 🔐 REGISTER & LOGIN
 class RegisterBusinessRequest(BaseModel):
     email: EmailStr
     password: str
@@ -191,8 +179,7 @@ async def register_business(request: RegisterBusinessRequest):
         "password_hash": hashed_password,
         "name": request.name,
     }
-    insert_query = insert(business_users).values(**new_user)
-    await database.execute(insert_query)
+    await database.execute(insert(business_users).values(**new_user))
     return {"status": "cont creat cu succes ✅"}
 
 class LoginBusinessRequest(BaseModel):
@@ -201,7 +188,7 @@ class LoginBusinessRequest(BaseModel):
 
 def create_access_token(data: dict, expires_delta: timedelta = None):
     to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=15))
+    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=60))
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
@@ -209,31 +196,26 @@ def create_access_token(data: dict, expires_delta: timedelta = None):
 async def login_business(request: LoginBusinessRequest):
     query = select(business_users).where(business_users.c.email == request.email)
     user = await database.fetch_one(query)
-    if not user:
-        raise HTTPException(status_code=400, detail="Email inexistent.")
-    valid = pwd_context.verify(request.password, user["password_hash"])
-    if not valid:
-        raise HTTPException(status_code=400, detail="Parolă incorectă.")
-    access_token = create_access_token(data={"sub": request.email})
-    return {"access_token": access_token, "token_type": "bearer"}
+    if not user or not pwd_context.verify(request.password, user["password_hash"]):
+        raise HTTPException(status_code=400, detail="Email sau parolă incorectă.")
+    token = create_access_token({"sub": request.email})
+    return {"access_token": token, "token_type": "bearer"}
 
-# RUTA PROTEJATĂ
+# 🔒 PROTECT JWT – get_current_user
 async def get_current_user(token: str = Depends(oauth2_scheme)):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        email: str = payload.get("sub")
-        if email is None:
+        email = payload.get("sub")
+        if not email:
             raise HTTPException(status_code=401, detail="Token invalid.")
     except JWTError:
         raise HTTPException(status_code=401, detail="Token invalid.")
-
-    query = select(business_users).where(business_users.c.email == email)
-    user = await database.fetch_one(query)
+    user = await database.fetch_one(select(business_users).where(business_users.c.email == email))
     if user is None:
         raise HTTPException(status_code=401, detail="Utilizator inexistent.")
-
     return user
 
+# ✅ /my-profile protejat
 @app.get("/my-profile")
 async def get_my_profile(current_user: dict = Depends(get_current_user)):
     return {
@@ -241,7 +223,3 @@ async def get_my_profile(current_user: dict = Depends(get_current_user)):
         "name": current_user["name"],
         "created_at": current_user["created_at"]
     }
-"""
-
-
-"/mnt/data/main.py"
