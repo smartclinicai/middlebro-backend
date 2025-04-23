@@ -11,3 +11,4 @@ google-auth-httplib2
 google-auth-oauthlib
 passlib[bcrypt]
 email-validator
+python-jose
