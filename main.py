@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, HTTPException, status, Depends, Security
+from fastapi import FastAPI, Request, HTTPException, Depends, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.openapi.utils import get_openapi
@@ -22,13 +22,19 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60
 oauth2_scheme = HTTPBearer()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+app = FastAPI(
+    title="MiddleBro API",
+    description="MiddleBro backend cu JWT, Calendar și rezervări automate",
+    version="1.0.0"
+)
+
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
     openapi_schema = get_openapi(
-        title="MiddleBro API",
-        version="1.0.0",
-        description="MiddleBro backend cu autentificare parteneri și rute securizate 🔐",
+        title=app.title,
+        version=app.version,
+        description=app.description,
         routes=app.routes,
     )
     openapi_schema["components"]["securitySchemes"] = {
@@ -38,14 +44,11 @@ def custom_openapi():
             "bearerFormat": "JWT"
         }
     }
+    for path in openapi_schema["paths"].values():
+        for method in path.values():
+            method.setdefault("security", [{"BearerAuth": []}])
     app.openapi_schema = openapi_schema
     return app.openapi_schema
-
-app = FastAPI(
-    title="MiddleBro API",
-    description="MiddleBro backend cu autentificare parteneri și rute securizate 🔐",
-    version="1.0.0"
-)
 
 app.openapi = custom_openapi
 
@@ -54,7 +57,7 @@ app.add_middleware(
     allow_origins=["https://middlebro.netlify.app"],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*"]
 )
 
 @app.on_event("startup")
