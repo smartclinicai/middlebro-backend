@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request, HTTPException, status, Depends, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.openapi.utils import get_openapi
 from pydantic import BaseModel, EmailStr
 import pandas as pd
 import os
@@ -21,21 +22,15 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60
 oauth2_scheme = HTTPBearer()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-app = FastAPI(
-    title="MiddleBro API",
-    description="MiddleBro backend cu autentificare parteneri și rute securizate 🔐",
-    version="1.0.0",
-    swagger_ui_init_oauth={},
-    openapi_tags=[
-        {"name": "Autentificare", "description": "Login & profil parteneri"}
-    ]
-)
-
-@app.on_event("startup")
-async def custom_openapi():
+def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
-    openapi_schema = app.openapi()
+    openapi_schema = get_openapi(
+        title="MiddleBro API",
+        version="1.0.0",
+        description="MiddleBro backend cu autentificare parteneri și rute securizate 🔐",
+        routes=app.routes,
+    )
     openapi_schema["components"]["securitySchemes"] = {
         "BearerAuth": {
             "type": "http",
@@ -43,11 +38,16 @@ async def custom_openapi():
             "bearerFormat": "JWT"
         }
     }
-    for path in openapi_schema["paths"].values():
-        for method in path.values():
-            method.setdefault("security", [{"BearerAuth": []}])
     app.openapi_schema = openapi_schema
     return app.openapi_schema
+
+app = FastAPI(
+    title="MiddleBro API",
+    description="MiddleBro backend cu autentificare parteneri și rute securizate 🔐",
+    version="1.0.0"
+)
+
+app.openapi = custom_openapi
 
 app.add_middleware(
     CORSMiddleware,
