@@ -1,5 +1,3 @@
-# Refacem main.py complet cu toate patch-urile incluse, inclusiv fixul pentru 403 la /my-profile
-full_main_py = """
 from fastapi import FastAPI, Request, HTTPException, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -240,6 +238,3 @@ async def get_my_profile(current_user: dict = Depends(get_current_user)):
         "name": current_user["name"],
         "created_at": current_user["created_at"]
     }
-"""
-
-
