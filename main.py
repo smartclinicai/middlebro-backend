@@ -92,8 +92,8 @@ class MatchRequest(BaseModel):
     email: str
 
 def load_businesses_from_sheet():
-    sheet_url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQg8KI_0G7imJNFCyzdwZdC3UkHfQxwTYDkdWfzfnB4IjDPJWr3uJdKlj6LI1g31BIweoPylMEHzskG/pub?output=csv"
-    df = pd.read_csv(sheet_url)
+    url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQg8KI_0G7imJNFCyzdwZdC3UkHfQxwTYDkdWfzfnB4IjDPJWr3uJdKlj6LI1g31BIweoPylMEHzskG/pub?output=csv"
+    df = pd.read_csv(url)
     businesses = []
     for _, row in df.iterrows():
         businesses.append({
@@ -117,19 +117,19 @@ async def match_service(request: MatchRequest):
             return {"match": biz}
     return {"match": None}
 
-def send_email_mailersend(to_email, subject, html_content):
+def send_email_mailersend(to_email, subject, html):
     url = "https://api.mailersend.com/v1/email"
     headers = {
         "Authorization": "Bearer mlsn.e11ff0706d2d5c341e1ad9042cfceefebcc4c540c6e7fea059b347b0ceff66ef",
         "Content-Type": "application/json"
     }
-    data = {
+    payload = {
         "from": {"email": "test-eqvygm0z8rjl0p7w@mlsender.net", "name": "MiddleBro"},
         "to": [{"email": to_email}],
         "subject": subject,
-        "html": html_content
+        "html": html
     }
-    requests.post(url, headers=headers, json=data)
+    requests.post(url, headers=headers, json=payload)
 
 class BookingRequest(BaseModel):
     user_name: str
@@ -141,44 +141,33 @@ class BookingRequest(BaseModel):
 
 @app.post("/book")
 async def book_appointment(request: BookingRequest):
-    try:
-        date_iso = get_next_date_for_weekday(request.date)
-        start_dt = datetime.fromisoformat(f"{date_iso}T{request.time}")
-        end_dt = start_dt + timedelta(hours=1)
-    except Exception as e:
-        return {"error": f"Data invalidă: {e}"}
-
-    new_booking = {
-        "user_name": request.user_name,
-        "business_id": request.business_id,
-        "service": request.service,
-        "date": request.date,
-        "time": request.time,
-        "created_at": datetime.now()
-    }
-
-    try:
-        await database.execute(insert(bookings).values(**new_booking))
-    except Exception as e:
-        print("❌ Eroare DB:", e)
-
+    date_iso = get_next_date_for_weekday(request.date)
+    start = datetime.fromisoformat(f"{date_iso}T{request.time}")
+    end = start + timedelta(hours=1)
+    await database.execute(insert(bookings).values(
+        user_name=request.user_name,
+        business_id=request.business_id,
+        service=request.service,
+        date=request.date,
+        time=request.time,
+        created_at=datetime.now()
+    ))
     send_email_mailersend(
         request.email,
-        "🗓️ Rezervarea ta la MiddleBro",
-        f"<p>Salut, {request.user_name}!</p><p>Ai rezervat un {request.service} la {request.business_id} pentru {request.date} la {request.time}.</p><p><strong>MiddleBro 🤖</strong></p>"
+        "📅 Rezervarea ta la MiddleBro",
+        f"<p>Salut {request.user_name}, ai rezervat un {request.service} la {request.business_id} pentru {request.date}, ora {request.time}.</p>"
     )
-
     try:
         create_event(
             summary=f"{request.service} - {request.user_name}",
             description=f"La {request.business_id} prin MiddleBro",
-            start_time=start_dt.isoformat(),
-            end_time=end_dt.isoformat()
+            start_time=start.isoformat(),
+            end_time=end.isoformat()
         )
     except Exception as e:
-        print("❌ Eroare calendar:", e)
+        print("Eroare calendar:", e)
+    return {"status": "confirmed", "booking": request.dict()}
 
-    return {"status": "confirmed", "booking": new_booking}
 class RegisterBusinessRequest(BaseModel):
     email: EmailStr
     password: str
@@ -186,57 +175,46 @@ class RegisterBusinessRequest(BaseModel):
 
 @app.post("/register_business")
 async def register_business(request: RegisterBusinessRequest):
-    query = select(business_users).where(business_users.c.email == request.email)
-    existing_user = await database.fetch_one(query)
-    if existing_user:
+    existing = await database.fetch_one(select(business_users).where(business_users.c.email == request.email))
+    if existing:
         return {"error": "Email deja înregistrat."}
-    hashed_password = pwd_context.hash(request.password)
-    new_user = {
-        "email": request.email,
-        "password_hash": hashed_password,
-        "name": request.name,
-    }
-    await database.execute(insert(business_users).values(**new_user))
+    hashed = pwd_context.hash(request.password)
+    await database.execute(insert(business_users).values(
+        email=request.email,
+        password_hash=hashed,
+        name=request.name
+    ))
     return {"status": "cont creat cu succes ✅"}
 
 class LoginBusinessRequest(BaseModel):
     email: EmailStr
     password: str
 
-def create_access_token(data: dict, expires_delta: timedelta = None):
-    to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=60))
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+def create_access_token(data: dict):
+    data["exp"] = datetime.utcnow() + timedelta(minutes=60)
+    return jwt.encode(data, SECRET_KEY, algorithm=ALGORITHM)
 
 @app.post("/login_business")
 async def login_business(request: LoginBusinessRequest):
-    query = select(business_users).where(business_users.c.email == request.email)
-    user = await database.fetch_one(query)
+    user = await database.fetch_one(select(business_users).where(business_users.c.email == request.email))
     if not user or not pwd_context.verify(request.password, user["password_hash"]):
         raise HTTPException(status_code=400, detail="Email sau parolă incorectă.")
     token = create_access_token({"sub": request.email})
     return {"access_token": token, "token_type": "bearer"}
 
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Security(oauth2_scheme)):
-    token = credentials.credentials
+async def get_current_user(creds: HTTPAuthorizationCredentials = Security(oauth2_scheme)):
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(creds.credentials, SECRET_KEY, algorithms=[ALGORITHM])
         email = payload.get("sub")
-        if not email:
-            raise HTTPException(status_code=401, detail="Token invalid.")
     except JWTError:
         raise HTTPException(status_code=401, detail="Token invalid.")
     user = await database.fetch_one(select(business_users).where(business_users.c.email == email))
-    if user is None:
+    if not user:
         raise HTTPException(status_code=401, detail="Utilizator inexistent.")
     return user
 
 @app.get("/my-profile", tags=["Autentificare"])
-async def get_my_profile(
-    current_user: dict = Depends(get_current_user),
-    token: HTTPAuthorizationCredentials = Security(oauth2_scheme)
-):
+async def get_my_profile(current_user: dict = Depends(get_current_user)):
     return {
         "email": current_user["email"],
         "name": current_user["name"],
