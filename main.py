@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr
 import pandas as pd
@@ -7,6 +7,7 @@ import requests
 from datetime import datetime, timedelta, date
 import calendar
 from passlib.context import CryptContext
+from jose import JWTError, jwt
 
 from db import database
 from models import bookings, business_users
@@ -15,6 +16,11 @@ from sqlalchemy import insert, select
 from calendar_integration import create_event
 
 app = FastAPI()
+
+# JWT Config
+SECRET_KEY = "middlebro-secret-key"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
 # 🔓 CORS pentru Netlify
 app.add_middleware(
@@ -138,14 +144,13 @@ class BookingRequest(BaseModel):
     user_name: str
     business_id: str
     service: str
-    date: str  # ex: joi
-    time: str  # ex: 18:00
+    date: str
+    time: str
     email: str
 
 @app.post("/book")
 async def book_appointment(request: BookingRequest):
     try:
-        # 🗓️ Transformăm "joi" în "2025-04-18"
         date_iso = get_next_date_for_weekday(request.date)
         start_dt = datetime.fromisoformat(f"{date_iso}T{request.time}")
         end_dt = start_dt + timedelta(hours=1)
@@ -170,7 +175,6 @@ async def book_appointment(request: BookingRequest):
     except Exception as e:
         print("❌ Eroare la salvare în DB:", e)
 
-    # ✉️ Mail (momentan fail 422)
     send_email_mailersend(
         to_email=request.email,
         subject="🗓️ Rezervarea ta la MiddleBro",
@@ -187,7 +191,6 @@ async def book_appointment(request: BookingRequest):
         """
     )
 
-    # 🗓️ Calendar
     try:
         create_event(
             summary=f"{request.service} - {request.user_name}",
@@ -201,7 +204,7 @@ async def book_appointment(request: BookingRequest):
 
     return {"status": "confirmed", "booking": new_booking}
 
-# 🔐 Register business endpoint
+# 🔐 Register business
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 class RegisterBusinessRequest(BaseModel):
@@ -228,3 +231,29 @@ async def register_business(request: RegisterBusinessRequest):
     await database.execute(insert_query)
 
     return {"status": "cont creat cu succes ✅"}
+
+# 🔐 Login business
+class LoginBusinessRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+def create_access_token(data: dict, expires_delta: timedelta = None):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=15))
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+@app.post("/login_business")
+async def login_business(request: LoginBusinessRequest):
+    query = select(business_users).where(business_users.c.email == request.email)
+    user = await database.fetch_one(query)
+
+    if not user:
+        raise HTTPException(status_code=400, detail="Email inexistent.")
+
+    valid = pwd_context.verify(request.password, user["password_hash"])
+    if not valid:
+        raise HTTPException(status_code=400, detail="Parolă incorectă.")
+
+    access_token = create_access_token(data={"sub": request.email})
+    return {"access_token": access_token, "token_type": "bearer"}
