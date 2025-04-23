@@ -1,9 +1,7 @@
 from fastapi import FastAPI, Request, HTTPException, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.openapi.models import OAuthFlows as OAuthFlowsModel
-from fastapi.security import OAuth2
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr
-from fastapi.security import OAuth2PasswordBearer
 import pandas as pd
 import os
 import requests
@@ -16,26 +14,40 @@ from db import database
 from models import bookings, business_users
 from calendar_integration import create_event
 
-class OAuth2PasswordBearerWithCookie(OAuth2):
-    def __init__(self, tokenUrl: str):
-        flows = OAuthFlowsModel(password={"tokenUrl": tokenUrl})
-        super().__init__(flows=flows)
-
-oauth2_scheme = OAuth2PasswordBearerWithCookie(tokenUrl="login_business")
-
 SECRET_KEY = "middlebro-secret-key"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
+
+oauth2_scheme = HTTPBearer()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 app = FastAPI(
     title="MiddleBro API",
     description="MiddleBro backend cu autentificare parteneri și rute securizate 🔐",
     version="1.0.0",
-    swagger_ui_init_oauth={
-        "usePkceWithAuthorizationCodeGrant": False
-    }
+    swagger_ui_init_oauth={},
+    openapi_tags=[
+        {"name": "Autentificare", "description": "Login & profil parteneri"}
+    ]
 )
+
+@app.on_event("startup")
+async def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    openapi_schema = app.openapi()
+    openapi_schema["components"]["securitySchemes"] = {
+        "BearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT"
+        }
+    }
+    for path in openapi_schema["paths"].values():
+        for method in path.values():
+            method.setdefault("security", [{"BearerAuth": []}])
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
 
 app.add_middleware(
     CORSMiddleware,
@@ -57,20 +69,21 @@ async def shutdown():
 @app.get("/")
 def home():
     return {"message": "MiddleBro funcționează!"}
-# 🔁 Conversie zi → ISO format
+
+# 🔁 Conversie zi -> ISO
 def get_next_date_for_weekday(weekday_name: str) -> str:
     days_map = {
-        "luni": 0, "marți": 1, "miercuri": 2,
-        "joi": 3, "vineri": 4, "sâmbătă": 5, "duminică": 6
+        "luni": 0, "marți": 1, "miercuri": 2, "joi": 3,
+        "vineri": 4, "sâmbătă": 5, "duminică": 6
     }
     today = date.today()
-    target_weekday = days_map.get(weekday_name.lower())
-    if target_weekday is None:
+    target = days_map.get(weekday_name.lower())
+    if target is None:
         raise ValueError(f"Zi invalidă: {weekday_name}")
-    days_ahead = (target_weekday - today.weekday() + 7) % 7 or 7
+    days_ahead = (target - today.weekday() + 7) % 7 or 7
     return (today + timedelta(days=days_ahead)).isoformat()
 
-# 📌 Matching
+# 📌 Match
 class MatchRequest(BaseModel):
     service: str
     city: str
@@ -104,7 +117,7 @@ async def match_service(request: MatchRequest):
             return {"match": biz}
     return {"match": None}
 
-# 📩 Email
+# 📩 Mail
 def send_email_mailersend(to_email, subject, html_content):
     url = "https://api.mailersend.com/v1/email"
     headers = {
@@ -119,7 +132,7 @@ def send_email_mailersend(to_email, subject, html_content):
     }
     requests.post(url, headers=headers, json=data)
 
-# 📅 Booking
+# 📅 Book
 class BookingRequest(BaseModel):
     user_name: str
     business_id: str
@@ -168,6 +181,7 @@ async def book_appointment(request: BookingRequest):
         print("❌ Eroare calendar:", e)
 
     return {"status": "confirmed", "booking": new_booking}
+
 # 🔐 REGISTER & LOGIN
 class RegisterBusinessRequest(BaseModel):
     email: EmailStr
@@ -208,8 +222,9 @@ async def login_business(request: LoginBusinessRequest):
     token = create_access_token({"sub": request.email})
     return {"access_token": token, "token_type": "bearer"}
 
-# 🔒 JWT Auth Helper
-async def get_current_user(token: str = Depends(oauth2_scheme)):
+# 🔒 JWT protecție
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(oauth2_scheme)):
+    token = credentials.credentials
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         email = payload.get("sub")
@@ -222,7 +237,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         raise HTTPException(status_code=401, detail="Utilizator inexistent.")
     return user
 
-# ✅ RUTA PROTEJATĂ
+# ✅ Profil partener
 @app.get("/my-profile")
 async def get_my_profile(current_user: dict = Depends(get_current_user)):
     return {
