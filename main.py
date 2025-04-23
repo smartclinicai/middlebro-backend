@@ -242,7 +242,4 @@ async def get_my_profile(current_user: dict = Depends(get_current_user)):
     }
 """
 
-with open("/mnt/data/main.py", "w") as f:
-    f.write(full_main_py)
 
-"/mnt/data/main.py"
