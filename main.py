@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Request, HTTPException, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr
 import pandas as pd
 import os
@@ -21,6 +22,9 @@ app = FastAPI()
 SECRET_KEY = "middlebro-secret-key"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
+
+# OAuth2 config
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login_business")
 
 # 🔓 CORS pentru Netlify
 app.add_middleware(
@@ -257,3 +261,28 @@ async def login_business(request: LoginBusinessRequest):
 
     access_token = create_access_token(data={"sub": request.email})
     return {"access_token": access_token, "token_type": "bearer"}
+
+# 🔐 RUTA PROTEJATĂ /my-profile
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        email: str = payload.get("sub")
+        if email is None:
+            raise HTTPException(status_code=401, detail="Token invalid.")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Token invalid.")
+
+    query = select(business_users).where(business_users.c.email == email)
+    user = await database.fetch_one(query)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Utilizator inexistent.")
+
+    return user
+
+@app.get("/my-profile")
+async def get_my_profile(current_user: dict = Depends(get_current_user)):
+    return {
+        "email": current_user["email"],
+        "name": current_user["name"],
+        "created_at": current_user["created_at"]
+    }
