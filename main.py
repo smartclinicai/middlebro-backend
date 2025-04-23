@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, HTTPException, status, Depends
+from fastapi import FastAPI, Request, HTTPException, status, Depends, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr
@@ -69,7 +69,6 @@ async def shutdown():
 @app.get("/")
 def home():
     return {"message": "MiddleBro funcționează!"}
-
 def get_next_date_for_weekday(weekday_name: str) -> str:
     days_map = {
         "luni": 0, "marți": 1, "miercuri": 2, "joi": 3,
@@ -177,7 +176,6 @@ async def book_appointment(request: BookingRequest):
         print("❌ Eroare calendar:", e)
 
     return {"status": "confirmed", "booking": new_booking}
-
 class RegisterBusinessRequest(BaseModel):
     email: EmailStr
     password: str
@@ -217,7 +215,7 @@ async def login_business(request: LoginBusinessRequest):
     token = create_access_token({"sub": request.email})
     return {"access_token": token, "token_type": "bearer"}
 
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(oauth2_scheme)):
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Security(oauth2_scheme)):
     token = credentials.credentials
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
@@ -231,8 +229,11 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(o
         raise HTTPException(status_code=401, detail="Utilizator inexistent.")
     return user
 
-@app.get("/my-profile", tags=["Autentificare"], dependencies=[Depends(oauth2_scheme)])
-async def get_my_profile(current_user: dict = Depends(get_current_user)):
+@app.get("/my-profile", tags=["Autentificare"])
+async def get_my_profile(
+    current_user: dict = Depends(get_current_user),
+    token: HTTPAuthorizationCredentials = Security(oauth2_scheme)
+):
     return {
         "email": current_user["email"],
         "name": current_user["name"],
