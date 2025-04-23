@@ -1,3 +1,5 @@
+# Refacem main.py complet cu toate patch-urile incluse, inclusiv fixul pentru 403 la /my-profile
+full_main_py = """
 from fastapi import FastAPI, Request, HTTPException, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -70,7 +72,6 @@ async def shutdown():
 def home():
     return {"message": "MiddleBro funcționează!"}
 
-# 🔁 Conversie zi -> ISO
 def get_next_date_for_weekday(weekday_name: str) -> str:
     days_map = {
         "luni": 0, "marți": 1, "miercuri": 2, "joi": 3,
@@ -83,7 +84,6 @@ def get_next_date_for_weekday(weekday_name: str) -> str:
     days_ahead = (target - today.weekday() + 7) % 7 or 7
     return (today + timedelta(days=days_ahead)).isoformat()
 
-# 📌 Match
 class MatchRequest(BaseModel):
     service: str
     city: str
@@ -117,7 +117,6 @@ async def match_service(request: MatchRequest):
             return {"match": biz}
     return {"match": None}
 
-# 📩 Mail
 def send_email_mailersend(to_email, subject, html_content):
     url = "https://api.mailersend.com/v1/email"
     headers = {
@@ -132,7 +131,6 @@ def send_email_mailersend(to_email, subject, html_content):
     }
     requests.post(url, headers=headers, json=data)
 
-# 📅 Book
 class BookingRequest(BaseModel):
     user_name: str
     business_id: str
@@ -182,7 +180,6 @@ async def book_appointment(request: BookingRequest):
 
     return {"status": "confirmed", "booking": new_booking}
 
-# 🔐 REGISTER & LOGIN
 class RegisterBusinessRequest(BaseModel):
     email: EmailStr
     password: str
@@ -222,7 +219,6 @@ async def login_business(request: LoginBusinessRequest):
     token = create_access_token({"sub": request.email})
     return {"access_token": token, "token_type": "bearer"}
 
-# 🔒 JWT protecție
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(oauth2_scheme)):
     token = credentials.credentials
     try:
@@ -237,11 +233,16 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(o
         raise HTTPException(status_code=401, detail="Utilizator inexistent.")
     return user
 
-# ✅ Profil partener
-@app.get("/my-profile")
+@app.get("/my-profile", tags=["Autentificare"], dependencies=[Depends(oauth2_scheme)])
 async def get_my_profile(current_user: dict = Depends(get_current_user)):
     return {
         "email": current_user["email"],
         "name": current_user["name"],
         "created_at": current_user["created_at"]
     }
+"""
+
+with open("/mnt/data/main.py", "w") as f:
+    f.write(full_main_py)
+
+"/mnt/data/main.py"
